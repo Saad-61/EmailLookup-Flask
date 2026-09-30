@@ -123,7 +123,7 @@ waitress-serve --host=0.0.0.0 --port=5000 wsgi:app
 ```json
 {
   "email": "user@example.com",
-  "fast_mode": false
+  "force_refresh": false
 }
 ```
 
