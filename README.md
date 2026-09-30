@@ -21,7 +21,7 @@ A high-performance reverse email OSINT and deliverability verification API built
 - **Port 25 Outbound ISP Check**:
   - Instant diagnostic endpoint to verify if ISP or host firewall blocks outbound port 25.
 - **Persistent Caching**:
-  - Thread-safe SQLite backend cache with TTL for fast repeated queries and rate limit preservation.
+  - Thread-safe SQLite backend cache with TTL for fast repeated queries (~1ms) and rate limit preservation.
 - **Production-Ready**:
   - Asynchronous probe orchestration, environment-driven configurations, and Waitress WSGI integration for production.
 
@@ -94,10 +94,10 @@ Edit `.env` to configure your keys (all optional, but recommended for full OSINT
 ### Development Mode (Port 5000)
 
 ```bash
-# Direct execution
+# Direct execution:
 python app/main.py
 
-# Or via Flask CLI
+# Or via Flask CLI:
 flask --app app.main run --host 0.0.0.0 --port 5000 --debug
 ```
 
@@ -109,65 +109,196 @@ waitress-serve --host=0.0.0.0 --port=5000 wsgi:app
 
 ---
 
-## 📡 API Reference
+## 🧪 Testing the API & Checking Results
 
-### 1. Health & Status
-- **`GET /`** — API metadata & service status
-- **`GET /api/health`** — Healthcheck endpoint
-- **`GET /api/port-check`** — Validates whether outbound port 25 is open
+You can test the running API directly using any of the following methods without needing a frontend UI:
 
-### 2. Reverse Email OSINT Lookup
-- **`POST /api/lookup`**
+### Method 1: PowerShell (Built-in on Windows)
 
-**Request Body:**
-```json
-{
-  "email": "user@example.com",
-  "force_refresh": false
-}
+#### 1. Full Reverse OSINT Lookup
+```powershell
+Invoke-RestMethod -Uri "http://127.0.0.1:5000/api/lookup" `
+  -Method Post `
+  -ContentType "application/json" `
+  -Body '{"email": "torvalds@linux-foundation.org"}' | ConvertTo-Json -Depth 6
 ```
 
-**Response Example:**
+#### 2. Force Refresh (Bypass 24h Cache)
+```powershell
+Invoke-RestMethod -Uri "http://127.0.0.1:5000/api/lookup" `
+  -Method Post `
+  -ContentType "application/json" `
+  -Body '{"email": "torvalds@linux-foundation.org", "force_refresh": true}' | ConvertTo-Json -Depth 6
+```
+
+#### 3. Direct SMTP Mailbox Deliverability Check
+```powershell
+Invoke-RestMethod -Uri "http://127.0.0.1:5000/api/verify" `
+  -Method Post `
+  -ContentType "application/json" `
+  -Body '{"email": "test@gmail.com"}' | ConvertTo-Json -Depth 5
+```
+
+#### 4. Outbound Port 25 Diagnostic
+```powershell
+Invoke-RestMethod -Uri "http://127.0.0.1:5000/api/port-check"
+```
+
+#### 5. Invalidate / Purge Cache for an Email
+```powershell
+Invoke-RestMethod -Uri "http://127.0.0.1:5000/api/cache/invalidate" `
+  -Method Post `
+  -ContentType "application/json" `
+  -Body '{"email": "torvalds@linux-foundation.org"}'
+```
+
+---
+
+### Method 2: cURL (Command Line)
+
+#### OSINT Lookup:
+```bash
+curl -X POST http://127.0.0.1:5000/api/lookup \
+  -H "Content-Type: application/json" \
+  -d '{"email": "torvalds@linux-foundation.org", "force_refresh": false}'
+```
+
+#### SMTP Verification:
+```bash
+curl -X POST http://127.0.0.1:5000/api/verify \
+  -H "Content-Type: application/json" \
+  -d '{"email": "test@gmail.com"}'
+```
+
+#### Port 25 Check:
+```bash
+curl http://127.0.0.1:5000/api/port-check
+```
+
+---
+
+### Method 3: Python Script
+
+```python
+import requests
+
+# 1. Reverse Email Lookup
+res = requests.post("http://127.0.0.1:5000/api/lookup", json={
+    "email": "torvalds@linux-foundation.org",
+    "force_refresh": False
+})
+print("Lookup Result:", res.json())
+
+# 2. SMTP Verification
+res_verify = requests.post("http://127.0.0.1:5000/api/verify", json={
+    "email": "test@gmail.com"
+})
+print("Verify Result:", res_verify.json())
+```
+
+---
+
+### Method 4: Postman / API Client GUI
+
+1. Open **Postman** and create a new request (`+`).
+2. Set the method to **`POST`**.
+3. Enter URL: `http://127.0.0.1:5000/api/lookup`
+4. Click the **Body** tab $\rightarrow$ select **raw** $\rightarrow$ choose **JSON** from the format dropdown.
+5. Paste the request payload:
+   ```json
+   {
+     "email": "user@example.com",
+     "force_refresh": false
+   }
+   ```
+6. Click **Send** to view the formatted JSON response and timing.
+
+---
+
+### Method 5: Web Browser (GET Endpoints)
+
+Open directly in your web browser:
+- [http://localhost:5000/](http://localhost:5000/) — API Server Status
+- [http://localhost:5000/api/health](http://localhost:5000/api/health) — Health Check
+- [http://localhost:5000/api/port-check](http://localhost:5000/api/port-check) — Outbound Port 25 ISP Status
+
+---
+
+## 📡 API Reference & Schema
+
+### `POST /api/lookup`
+Performs a deep reverse email OSINT search across platforms and public sources.
+
+#### Request Fields:
+| Field | Type | Required | Description |
+| :--- | :--- | :--- | :--- |
+| `email` | `string` | Yes | Target email address to analyze |
+| `force_refresh` | `boolean` | No | `false` (default): Return cached data if queried within 24h (~1ms response).<br>`true`: Bypass cache and trigger live web scraping across all platforms. |
+
+#### Response Schema:
 ```json
 {
-  "email": "user@example.com",
-  "domain": "example.com",
-  "is_valid_syntax": true,
+  "email": "torvalds@linux-foundation.org",
+  "domain": "linux-foundation.org",
+  "email_type": "corporate",
+  "query_time_ms": 342,
+  "cached": false,
   "person": {
-    "display_name": "Jane Doe",
-    "avatar_url": "https://...",
-    "username": "janedoe",
-    "location": "San Francisco, CA"
+    "name": "Linus Torvalds",
+    "avatar": "https://avatars.githubusercontent.com/u/1024025",
+    "bio": "Creator of Linux and Git",
+    "location": "Portland, OR",
+    "website": "https://kernel.org"
   },
   "platforms": [
     {
-      "platform": "GitHub",
-      "exists": true,
-      "profile_url": "https://github.com/janedoe",
-      "confidence": "high"
+      "name": "GitHub",
+      "found": true,
+      "icon": "github",
+      "url": "https://github.com/torvalds"
     }
   ],
-  "duration_ms": 342.1
+  "social_candidates": [],
+  "social_candidates_by_platform": {}
 }
 ```
 
-### 3. SMTP Mailbox Deliverability Check
-- **`POST /api/verify`**
+---
 
-**Request Body:**
+### `POST /api/verify`
+Performs multi-stage DNS MX resolution and SMTP mailbox deliverability handshake.
+
+#### Request:
 ```json
 {
-  "email": "user@example.com"
+  "email": "test@gmail.com"
 }
 ```
 
-### 4. Cache Management
-- **`POST /api/cache/invalidate`**
-
-**Request Body:**
+#### Response:
 ```json
 {
-  "email": "user@example.com"
+  "email": "test@gmail.com",
+  "valid": true,
+  "catchall": false,
+  "mx_provider": "Google Workspace / Gmail",
+  "mx_record": "gmail-smtp-in.l.google.com",
+  "confidence": 95,
+  "response_time_ms": 280,
+  "port25_available": true,
+  "method_used": "smtp"
+}
+```
+
+---
+
+### `POST /api/cache/invalidate`
+Purges the 24-hour cache entry for a given email address.
+
+#### Request:
+```json
+{
+  "email": "torvalds@linux-foundation.org"
 }
 ```
 
